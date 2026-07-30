@@ -118,7 +118,7 @@ warnings.filterwarnings("ignore")
 # Codons to exclude from CLR-PCA analysis (Stop codons + single-codon amino acids)
 EXCLUDED_CODONS = {"UAA", "UAG", "UGA", "AUG", "UGG"}
 
-# Group visual styles
+
 GROUP_COLORS = {
     "MPXV Peripheral": "#0072B5",
     "MPXV Core": "#BC3C29",
