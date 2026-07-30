@@ -115,7 +115,7 @@ from matplotlib.patches import Ellipse
 
 warnings.filterwarnings("ignore")
 
-# Codons to exclude from CLR-PCA analysis (Stop codons + single-codon amino acids)
+# Codons to exclude from CLR-PCA analysis
 EXCLUDED_CODONS = {"UAA", "UAG", "UGA", "AUG", "UGG"}
 
 
@@ -522,6 +522,127 @@ def main() -> None:
     print(f"Explained Variance: PC1={explained[0]:.2f}%, PC2={explained[1]:.2f}%")
     print(f"Results saved to directory: {args.output_dir.resolve()}")
     print("=" * 50)
+
+
+if __name__ == "__main__":
+    main()
+
+    
+# CLR-Based Viral Distance Analysis of RSCU Profiles
+import numpy as np
+import pandas as pd
+
+
+INPUT_FILE = "/Users/babycqq/Desktop/RSCU-outcome.xlsx"
+
+OUTPUT_CSV = "CLR_Euclidean_Distance_to_Virus.csv"
+OUTPUT_LONG_CSV = "CLR_Euclidean_Distance_to_Virus_long.csv"
+
+
+def extract_codon_str(name):
+    name = str(name).strip()
+    if len(name) >= 3:
+        return name[-3:].upper()
+    return name.upper()
+
+
+def clr_transform(data, epsilon=1e-9):
+    data_safe = np.asarray(data, dtype=float) + epsilon
+    log_data = np.log(data_safe)
+    return log_data - np.mean(log_data, axis=1, keepdims=True)
+
+
+def is_virus_row(species_name, order_name):
+    text = f"{species_name} {order_name}".lower()
+    return "virus" in text or str(species_name).upper().startswith("MPXV")
+
+
+def main():
+    df = pd.read_excel(INPUT_FILE)
+
+    species = df.iloc[:, 0].astype(str).values
+    orders = df.iloc[:, 1].astype(str).values
+
+
+    excluded = ["UAA", "UAG", "UGA", "AUG", "UGG"]
+    valid_cols = [
+        c for c in df.columns[2:]
+        if extract_codon_str(c) not in excluded
+    ]
+
+    # RSCU 数值矩阵
+    rscu = (
+        df[valid_cols]
+        .apply(pd.to_numeric, errors="coerce")
+        .fillna(0)
+        .values
+    )
+
+
+    clr = clr_transform(rscu)
+
+
+    virus_mask = np.array([
+        is_virus_row(s, o)
+        for s, o in zip(species, orders)
+    ])
+
+    if virus_mask.sum() == 0:
+        raise ValueError(
+            "No virus rows were found. "
+            "Expected rows containing 'Virus' or species names starting with 'MPXV'."
+        )
+
+    host_idx = np.where(~virus_mask)[0]
+    virus_idx = np.where(virus_mask)[0]
+
+    host_species = species[host_idx]
+    host_orders = orders[host_idx]
+    virus_labels = species[virus_idx]
+
+
+    distances = np.zeros((len(host_idx), len(virus_idx)), dtype=float)
+
+    for i, h in enumerate(host_idx):
+        distances[i, :] = np.linalg.norm(
+            clr[h] - clr[virus_idx],
+            axis=1
+        )
+
+    distance_cols = [
+        f"Distance_to_{str(v).replace(' ', '_')}"
+        for v in virus_labels
+    ]
+
+
+    wide = pd.DataFrame(distances, columns=distance_cols)
+    wide.insert(0, "Order", host_orders)
+    wide.insert(0, "Species", host_species)
+    wide["Mean_distance_to_virus"] = distances.mean(axis=1)
+
+    wide = (
+        wide
+        .sort_values("Mean_distance_to_virus", ascending=True)
+        .reset_index(drop=True)
+    )
+
+    wide.to_csv(OUTPUT_CSV, index=False)
+
+
+    long_df = wide.melt(
+        id_vars=["Species", "Order", "Mean_distance_to_virus"],
+        value_vars=distance_cols,
+        var_name="Virus_reference",
+        value_name="CLR_Euclidean_distance",
+    )
+
+    long_df["Virus_reference"] = (
+        long_df["Virus_reference"]
+        .str.replace("Distance_to_", "", regex=False)
+        .str.replace("_", " ")
+    )
+
+    long_df.to_csv(OUTPUT_LONG_CSV, index=False)
 
 
 if __name__ == "__main__":
