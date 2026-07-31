@@ -94,7 +94,191 @@ if __name__ == "__main__":
     print(f"saved {csv_out}，saved {png_out}")
 
 
+# CLR-hotmap
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.gridspec as gridspec
+from scipy.cluster.hierarchy import linkage, leaves_list, dendrogram
+from scipy.spatial.distance import pdist
+from matplotlib.colors import to_rgb, LinearSegmentedColormap
+import warnings
+import os
+import urllib.request
+import matplotlib.font_manager as fm
+    font_path = 'Arial.ttf'
+    if not os.path.exists(font_path):
+        try:
+            url = "https://github.com/matomo-org/travis-scripts/raw/master/fonts/Arial.ttf"
+            urllib.request.urlretrieve(url, font_path)
+        except:
+            pass
 
+    try:
+        fm.fontManager.addfont(font_path)
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['Arial']
+    except:
+        pass
+
+    plt.rcParams['mathtext.fontset'] = 'custom'
+    plt.rcParams['mathtext.rm'] = 'Arial'
+    plt.rcParams['mathtext.it'] = 'DejaVu Sans:italic' 
+    plt.rcParams['mathtext.default'] = 'regular'
+
+setup_font_env()
+
+def extract_codon_str(name):
+    name = str(name).strip()
+    if len(name) >= 3: return name[-3:].upper()
+    return name.upper()
+
+def clr_transform(data, epsilon=1e-9):
+    data_safe = data + epsilon
+    log_data = np.log(data_safe)
+    return log_data - np.log(np.exp(np.mean(log_data, axis=1, keepdims=True)))
+
+file_path = '59个RSCU.xlsx'
+try:
+    df = pd.read_excel(file_path)
+except:
+    pass
+
+if 'df' in locals():
+    species = df.iloc[:, 0].values.astype(str)
+    order = df.iloc[:, 1].values.astype(str)
+
+    excluded = ['UAA', 'UAG', 'UGA', 'AUG', 'UGG']
+    valid_cols = [c for c in df.columns[2:] if extract_codon_str(c) not in excluded]
+
+    rscu_data = df[valid_cols].values
+    codon_names = valid_cols
+    is_virus = pd.Series(order).str.contains('virus|Virus', case=False).values
+
+    rscu_z = np.zeros_like(rscu_data)
+    for i in range(len(rscu_data)):
+        std = np.std(rscu_data[i])
+        if std > 0: rscu_z[i] = (rscu_data[i] - np.mean(rscu_data[i])) / std
+
+    # Clustering
+    row_linkage = linkage(pdist(clr_transform(rscu_data), 'euclidean'), 'average')
+    row_order = leaves_list(row_linkage)
+    col_linkage = linkage(pdist(rscu_z.T, 'euclidean'), 'average')
+    col_order = leaves_list(col_linkage)
+
+    # Sorted Data
+    rscu_plot = rscu_z[row_order][:, col_order]
+    species_sorted = species[row_order]
+    order_sorted = order[row_order]
+    is_virus_sorted = is_virus[row_order]
+    codon_labels = [extract_codon_str(codon_names[i]) for i in col_order]
+
+    # Colors Mapping
+    codon_to_aa = {
+        'UUU': 'Phe', 'UUC': 'Phe', 'UUA': 'Leu', 'UUG': 'Leu', 'CUU': 'Leu', 'CUC': 'Leu', 'CUA': 'Leu', 'CUG': 'Leu',
+        'AUU': 'Ile', 'AUC': 'Ile', 'AUA': 'Ile', 'AUG': 'Met', 'GUU': 'Val', 'GUC': 'Val', 'GUA': 'Val', 'GUG': 'Val',
+        'UCU': 'Ser', 'UCC': 'Ser', 'UCA': 'Ser', 'UCG': 'Ser', 'CCU': 'Pro', 'CCC': 'Pro', 'CCA': 'Pro', 'CCG': 'Pro',
+        'ACU': 'Thr', 'ACC': 'Thr', 'ACA': 'Thr', 'ACG': 'Thr', 'GCU': 'Ala', 'GCC': 'Ala', 'GCA': 'Ala', 'GCG': 'Ala',
+        'UAU': 'Tyr', 'UAC': 'Tyr', 'UAA': 'Stop', 'UAG': 'Stop', 'CAU': 'His', 'CAC': 'His', 'CAA': 'Gln', 'CAG': 'Gln',
+        'AAU': 'Asn', 'AAC': 'Asn', 'AAA': 'Lys', 'AAG': 'Lys', 'GAU': 'Asp', 'GAC': 'Asp', 'GAA': 'Glu', 'GAG': 'Glu',
+        'UGU': 'Cys', 'UGC': 'Cys', 'UGA': 'Stop', 'UGG': 'Trp', 'CGU': 'Arg', 'CGC': 'Arg', 'CGA': 'Arg', 'CGG': 'Arg',
+        'AGU': 'Ser', 'AGC': 'Ser', 'AGA': 'Arg', 'AGG': 'Arg', 'GGU': 'Gly', 'GGC': 'Gly', 'GGA': 'Gly', 'GGG': 'Gly'
+    }
+    aa_colors = {
+        'Ala': '#8dd3c7', 'Arg': '#ffffb3', 'Asn': '#bebada', 'Asp': '#fb8072', 'Cys': '#80b1d3', 'Gln': '#fdb462',
+        'Glu': '#b3de69', 'Gly': '#fccde5', 'His': '#d9d9d9', 'Ile': '#bc80bd', 'Leu': '#ccebc5', 'Lys': '#ffed6f',
+        'Met': '#e41a1c', 'Phe': '#377eb8', 'Pro': '#4daf4a', 'Ser': '#984ea3', 'Thr': '#ff7f00', 'Trp': '#a65628',
+        'Tyr': '#f781bf', 'Val': '#999999'
+    }
+    col_colors = [aa_colors.get(codon_to_aa.get(c, ''), '#FFFFFF') for c in codon_labels]
+
+    order_colors = {
+        'Chiroptera': '#66c2a5', 'Perissodactyla': '#fc8d62', 'Primates': '#8da0cb',
+        'Rodentia': '#e78ac3', 'Artiodactyla': '#a6d854', 'Carnivora': '#ffd92f',
+        'Lagomorpha': '#e5c494', 'Virus': '#d73027'
+    }
+    row_colors = []
+    for o, v in zip(order_sorted, is_virus_sorted):
+        if v: row_colors.append('#d73027')
+        else:
+            found=False
+            for k,c in order_colors.items():
+                if k in o: row_colors.append(c); found=True; break
+            if not found: row_colors.append('#999999')
+    fig = plt.figure(figsize=(20, 15), dpi=300)
+    gs = gridspec.GridSpec(2, 3, width_ratios=[1.5, 0.2, 8], height_ratios=[0.2, 8],
+                           wspace=0.02, hspace=0.01, left=0.05, right=0.75, top=0.93, bottom=0.08)
+
+    ax_dendro = fig.add_subplot(gs[1, 0])
+    ax_side = fig.add_subplot(gs[1, 1])
+    ax_main = fig.add_subplot(gs[1, 2])
+    ax_top = fig.add_subplot(gs[0, 2])
+    dendrogram(row_linkage, orientation='left', ax=ax_dendro,
+               color_threshold=0, above_threshold_color='black')
+
+    ax_dendro.axis('off'); ax_dendro.invert_yaxis()
+
+    ax_side.imshow(np.array([to_rgb(c) for c in row_colors]).reshape(-1, 1, 3), aspect='auto', interpolation='nearest')
+    ax_side.axis('off')
+
+    ax_top.imshow(np.array([to_rgb(c) for c in col_colors]).reshape(1, -1, 3), aspect='auto', interpolation='nearest')
+    ax_top.axis('off')
+    ax_top.text(1.01, 0.5, 'Amino Acid', transform=ax_top.transAxes, va='center', fontweight='bold')
+
+    im = ax_main.imshow(rscu_plot, aspect='auto', cmap=LinearSegmentedColormap.from_list('bwr', ['#4575b4', 'white', '#d73027']), vmin=-3, vmax=3)
+    ax_main.set_xticks(range(len(codon_labels)))
+    ax_main.set_xticklabels(codon_labels, rotation=90, fontsize=8) # 密码子保持 Arial
+
+    ax_main.yaxis.tick_right()
+    ax_main.set_yticks(np.arange(len(species_sorted)))
+    final_ylabels = []
+
+    for i, name in enumerate(species_sorted):
+        current_order = str(order_sorted[i])
+        if 'virus' in current_order.lower() or 'virus' in name.lower():
+            final_ylabels.append(name)
+        else:
+    
+            latex_name = r"$\mathit{" + name.replace(" ", r"\ ") + "}$"
+            final_ylabels.append(latex_name)
+
+
+    ax_main.set_yticklabels(final_ylabels, fontsize=9)
+    cbar_ax = fig.add_axes([0.85, 0.75, 0.015, 0.15])
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_label('Z-score', fontweight='bold')
+
+    unique_orders = sorted(list(set([str(o) for o in order if 'Virus' not in str(o)])))
+    display_orders = ['Virus'] + unique_orders
+    patches = []
+    for o in display_orders:
+        c = '#d73027' if 'Virus' in o else order_colors.get(next((k for k in order_colors if k in o), ''), '#999999')
+        patches.append(mpatches.Patch(color=c, label=o))
+
+    leg = fig.legend(handles=patches, loc='upper left', bbox_to_anchor=(0.85, 0.65), title='Order', frameon=False)
+    plt.setp(leg.get_title(), fontweight='bold')
+
+    for text in leg.get_texts():
+        t = text.get_text()
+        if 'Virus' in t:
+            text.set_fontstyle('normal')
+        else:
+            text.set_fontstyle('italic')
+
+    used_aa = sorted(list(set([codon_to_aa.get(c) for c in codon_labels])))
+    aa_patches = [mpatches.Patch(color=aa_colors.get(a, '#FFFFFF'), label=a) for a in used_aa]
+    leg2 = fig.legend(handles=aa_patches, loc='upper left', bbox_to_anchor=(0.85, 0.45), title='Amino Acid', frameon=False, ncol=1)
+    plt.setp(leg2.get_title(), fontweight='bold')
+
+    plt.savefig('RSCU_Heatmap_Final_MathText.png', dpi=300, bbox_inches='tight')
+    print("✓ ")
+    plt.show()
+
+    out_df = pd.DataFrame(rscu_plot, columns=codon_labels, index=species_sorted)
+    out_df.insert(0, 'Order', order_sorted)
+    out_df.to_csv('RSCU_Data_Sorted.csv')
+    
 # CLR-PCA analysis and visualization for Relative Synonymous Codon Usage (RSCU).
 
 from __future__ import annotations
