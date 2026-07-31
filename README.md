@@ -1568,3 +1568,561 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+#!/usr/bin/env python3
+# MPXV CpG vs UpA
+
+
+import os
+import glob
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from Bio import SeqIO
+import urllib.request
+import matplotlib.font_manager as fm
+import matplotlib.ticker as ticker
+
+def setup_font_env():
+    font_path = 'Arial.ttf'
+    if not os.path.exists(font_path):
+        try:
+            url = "https://github.com/matomo-org/travis-scripts/raw/master/fonts/Arial.ttf"
+            urllib.request.urlretrieve(url, font_path)
+        except Exception:
+            pass
+    try:
+        fm.fontManager.addfont(font_path)
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['Arial']
+        plt.rcParams['axes.unicode_minus'] = False
+        plt.rcParams['mathtext.fontset'] = 'custom'
+        plt.rcParams['mathtext.it'] = 'Arial:italic'
+        plt.rcParams['mathtext.rm'] = 'Arial'
+    except Exception:
+        pass
+
+setup_font_env()
+
+def clean_and_concat_fasta(filepath):
+
+    full_seq = ""
+    for record in SeqIO.parse(filepath, "fasta"):
+        seq_str = str(record.seq).upper().replace('N', '')
+        full_seq += seq_str
+    return full_seq
+
+
+def calc_rho(seq, dinuc):
+
+    if len(seq) < 2:
+        return np.nan
+
+    n1, n2 = dinuc[0], dinuc[1]
+
+    f_1 = seq.count(n1) / len(seq)
+    f_2 = seq.count(n2) / len(seq)
+
+    count_12 = sum(1 for i in range(len(seq) - 1) if seq[i:i + 2] == dinuc)
+    f_12 = count_12 / (len(seq) - 1)
+
+    if f_1 * f_2 == 0:
+        return 0
+
+    return f_12 / (f_1 * f_2)
+
+
+results = []
+
+
+virus_files = {
+    "MPXV Core Genes": {
+        "file": "44.fasta",
+        "color": "#C0392B",
+        "marker": "*"
+    },
+    "MPXV Peripheral Genes": {
+        "file": "43_genes.fasta",
+        "color": "#8E44AD",
+        "marker": "*"
+    }
+}
+
+
+
+for virus_name, info in virus_files.items():
+    virus_file = info["file"]
+
+    if os.path.exists(virus_file):
+        virus_seq = clean_and_concat_fasta(virus_file)
+
+        rho_cpg = calc_rho(virus_seq, 'CG')
+        rho_tpa = calc_rho(virus_seq, 'TA')
+
+        results.append({
+            'Species': virus_name,
+            'Group': 'Virus',
+            'Virus_Type': virus_name,
+            'Color': info["color"],
+            'Marker': info["marker"],
+            'Rho_CpG': rho_cpg,
+            'Rho_UpA': rho_tpa
+        })
+
+        print(f"  ✓ {virus_name}: CpG = {rho_cpg:.3f}, UpA = {rho_tpa:.3f}")
+
+    else:
+        print(f"  ❌  {virus_file}")
+
+
+
+host_folders = {
+    'bat': {
+        'label': r'$\mathit{Chiroptera}$',
+        'color': '#E64B35'
+    },
+    'primates': {
+        'label': r'$\mathit{Primates}$',
+        'color': '#4DBBD5'
+    },
+    'rodent': {
+        'label': r'$\mathit{Rodentia}$',
+        'color': '#00A087'
+    },
+    'perissodactyla': {
+        'label': r'$\mathit{Perissodactyla}$',
+        'color': '#3C5488'
+    }
+}
+
+
+
+for folder, info in host_folders.items():
+    if os.path.isdir(folder):
+        files = glob.glob(os.path.join(folder, "*.fasta")) + glob.glob(os.path.join(folder, "*.fas"))
+
+        count = 0
+
+        for f in files:
+            seq = clean_and_concat_fasta(f)
+
+            cpg = calc_rho(seq, 'CG')
+            tpa = calc_rho(seq, 'TA')
+
+            if not (np.isnan(cpg) or np.isnan(tpa)):
+                results.append({
+                    'Species': os.path.basename(f),
+                    'Group': info['label'],
+                    'Virus_Type': '',
+                    'Color': info['color'],
+                    'Marker': 'o',
+                    'Rho_CpG': cpg,
+                    'Rho_UpA': tpa
+                })
+
+                count += 1
+
+        print(f"  ✓ {folder}:  {count} ")
+
+    else:
+        print(f"  ❌ : {folder}")
+
+
+df = pd.DataFrame(results)
+
+if df.empty:
+    print("\n❌ ")
+    exit()
+
+
+fig, ax = plt.subplots(figsize=(8.5, 7), dpi=300)
+
+
+ax.axvline(0.78, color='gray', linestyle=':', alpha=0.6)
+ax.axhline(0.78, color='gray', linestyle=':', alpha=0.6)
+ax.axvline(1.25, color='gray', linestyle=':', alpha=0.6)
+ax.axhline(1.25, color='gray', linestyle=':', alpha=0.6)
+
+ax.axvspan(
+    0,
+    0.78,
+    ymin=0,
+    ymax=0.78 / ax.get_ylim()[1] if ax.get_ylim()[1] > 0 else 1,
+    color='#FDEBD0',
+    alpha=0.3,
+    zorder=0
+)
+
+df_hosts = df[df['Group'] != 'Virus']
+
+for group in df_hosts['Group'].unique():
+    color = [v['color'] for k, v in host_folders.items() if v['label'] == group][0]
+    subset = df_hosts[df_hosts['Group'] == group]
+
+    ax.scatter(
+        subset['Rho_CpG'],
+        subset['Rho_UpA'],
+        c=color,
+        label=group,
+        s=70,
+        alpha=0.75,
+        edgecolor='white',
+        linewidth=0.5,
+        zorder=3
+    )
+
+
+df_virus = df[df['Group'] == 'Virus']
+
+for _, row in df_virus.iterrows():
+    ax.scatter(
+        row['Rho_CpG'],
+        row['Rho_UpA'],
+        c=row['Color'],
+        label=row['Species'],
+        marker=row['Marker'],
+        s=520,
+        edgecolor='black',
+        linewidth=1.2,
+        zorder=5
+    )
+
+
+ax.set_xlabel(r'CpG Relative Abundance ($\rho_{CpG}$)', fontsize=14, fontweight='bold')
+ax.set_ylabel(r'UpA Relative Abundance ($\rho_{UpA}$)', fontsize=14, fontweight='bold')
+
+ax.set_xlim(left=min(0.2, df['Rho_CpG'].min() - 0.1))
+ax.set_ylim(
+    bottom=min(0.4, df['Rho_UpA'].min() - 0.1),
+    top=max(1.1, df['Rho_UpA'].max() + 0.1)
+)
+
+ax.yaxis.set_major_locator(ticker.MultipleLocator(0.5))
+ax.xaxis.set_major_locator(ticker.MultipleLocator(0.5))
+
+ax.tick_params(labelsize=12)
+ax.grid(True, linestyle='--', alpha=0.3, zorder=1)
+sns.despine()
+
+ax.legend(
+    title='Order / Virus',
+    title_fontsize=12,
+    fontsize=11,
+    loc='upper left',
+    bbox_to_anchor=(1.02, 1),
+    frameon=False
+)
+
+plt.tight_layout()
+
+output_file = 'MPOX_Core_Peripheral_Dinucleotide_CpG_UpA.png'
+plt.savefig(output_file, dpi=300, bbox_inches='tight')
+
+print(f"\n🎉 : {output_file}")
+
+plt.show()
+
+
+#!/usr/bin/env python3
+# Joint analysis of the zero model of MPXV core genes/peripheral genes and host ecological niche
+
+
+import os
+import glob
+import random
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import urllib.request
+import matplotlib.font_manager as fm
+
+try:
+    from Bio import SeqIO
+    from Bio.Seq import Seq
+except ImportError:
+    !pip install biopython
+    from Bio import SeqIO
+    from Bio.Seq import Seq
+
+def setup_font_env():
+    font_path = 'Arial.ttf'
+    if not os.path.exists(font_path):
+        try:
+            url = "https://github.com/matomo-org/travis-scripts/raw/master/fonts/Arial.ttf"
+            urllib.request.urlretrieve(url, font_path)
+        except Exception:
+            pass
+    try:
+        fm.fontManager.addfont(font_path)
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['Arial']
+        plt.rcParams['axes.unicode_minus'] = False
+    except Exception:
+        pass
+
+
+setup_font_env()
+
+CODON_TABLE = {
+    'F': ['TTT', 'TTC'], 'L': ['TTA', 'TTG', 'CTT', 'CTC', 'CTA', 'CTG'],
+    'I': ['ATT', 'ATC', 'ATA'], 'M': ['ATG'], 'V': ['GTT', 'GTC', 'GTA', 'GTG'],
+    'S': ['TCT', 'TCC', 'TCA', 'TCG', 'AGT', 'AGC'], 'P': ['CCT', 'CCC', 'CCA', 'CCG'],
+    'T': ['ACT', 'ACC', 'ACA', 'ACG'], 'A': ['GCT', 'GCC', 'GCA', 'GCG'],
+    'Y': ['TAT', 'TAC'], 'stop': ['TAA', 'TAG', 'TGA'], 'H': ['CAT', 'CAC'],
+    'Q': ['CAA', 'CAG'], 'N': ['AAT', 'AAC'], 'K': ['AAA', 'AAG'],
+    'D': ['GAT', 'GAC'], 'E': ['GAA', 'GAG'], 'C': ['TGT', 'TGC'],
+    'W': ['TGG'], 'R': ['CGT', 'CGC', 'CGA', 'CGG', 'AGA', 'AGG'],
+    'G': ['GGT', 'GGC', 'GGA', 'GGG']
+}
+
+
+def clean_and_concat_fasta(filepath):
+    full_seq = ""
+    for record in SeqIO.parse(filepath, "fasta"):
+        seq_str = str(record.seq).upper()
+        seq_str = seq_str.replace('N', '')
+        seq_str = seq_str[:(len(seq_str) // 3) * 3]
+        full_seq += seq_str
+    return full_seq
+
+
+def calculate_rho_cg(seq_str):
+    L = len(seq_str)
+    if L < 2:
+        return np.nan
+
+    f_C = seq_str.count('C') / L
+    f_G = seq_str.count('G') / L
+
+    count_CG = sum(1 for i in range(L - 1) if seq_str[i:i + 2] == 'CG')
+    f_CG = count_CG / (L - 1)
+
+    if f_C * f_G == 0:
+        return 0
+
+    return f_CG / (f_C * f_G)
+
+
+def generate_null_sequences(real_seq_str, iterations=1000):
+    real_seq = Seq(real_seq_str)
+    aa_seq = str(real_seq.translate(table=1))
+
+    null_seqs = []
+
+    for _ in range(iterations):
+        random_dna = []
+
+        for aa in aa_seq:
+            if aa == '*':
+                codons = CODON_TABLE['stop']
+            else:
+                codons = CODON_TABLE.get(aa, ['NNN'])
+
+            random_dna.append(random.choice(codons))
+
+        null_seqs.append("".join(random_dna))
+
+    return null_seqs
+
+virus_files = {
+    "MPVX Core Genes": {
+        "file": "44.fasta",
+        "color": "#C0392B"
+    },
+    "MPXV Peripheral Genes": {
+        "file": "43_genes.fasta",
+        "color": "#8E44AD"
+    }
+}
+
+virus_results = {}
+
+print("🚀 ing \n")
+
+for virus_name, info in virus_files.items():
+    virus_file = info["file"]
+
+    if not os.path.exists(virus_file):
+        print(f"❌  {virus_file}")
+        continue
+
+    print(f"  ▶ ing {virus_file}")
+
+    virus_seq = clean_and_concat_fasta(virus_file)
+
+    if len(virus_seq) == 0:
+        print(f"  ⚠️ {virus_file} 。")
+        continue
+
+    obs_cg = calculate_rho_cg(virus_seq)
+
+    null_seqs = generate_null_sequences(virus_seq, iterations=1000)
+    null_cgs = [calculate_rho_cg(s) for s in null_seqs]
+
+    null_mean = np.mean(null_cgs)
+    null_std = np.std(null_cgs)
+
+    if null_std == 0:
+        z_score = np.nan
+    else:
+        z_score = (obs_cg - null_mean) / null_std
+
+    p_value = sum(1 for x in null_cgs if x <= obs_cg) / 1000
+    p_str = "p < 0.001" if p_value == 0 else f"p = {p_value:.3f}"
+
+    virus_results[virus_name] = {
+        "obs_cg": obs_cg,
+        "null_cgs": null_cgs,
+        "null_mean": null_mean,
+        "z_score": z_score,
+        "p_str": p_str,
+        "color": info["color"]
+    }
+
+    print(f"  ✓ {virus_name}: Observed = {obs_cg:.3f}, Null mean = {null_mean:.3f}, Z = {z_score:.2f}")
+
+
+if len(virus_results) == 0:
+    print("\n❌ ")
+    exit()
+
+
+host_folders = {
+    'bat': '#E64B35',
+    'primates': '#4DBBD5',
+    'rodent': '#00A087'
+}
+
+host_results = {}
+
+print("\n📂 ing")
+
+current_dir = os.getcwd()
+print(f"👉 : {current_dir}")
+print(f"👉 : {[d for d in os.listdir() if os.path.isdir(d)]}\n")
+
+for folder, color in host_folders.items():
+
+    if os.path.isdir(folder):
+        files = glob.glob(os.path.join(folder, "*.fasta")) + glob.glob(os.path.join(folder, "*.fas"))
+
+
+
+        cgs = []
+
+        for f in files:
+            seq = clean_and_concat_fasta(f)
+            cg = calculate_rho_cg(seq)
+
+            if not np.isnan(cg):
+                cgs.append(cg)
+
+        if cgs:
+            host_results[folder] = {
+                'mean': np.mean(cgs),
+                'color': color,
+                'count': len(cgs)
+            }
+
+            print(f"  ✓ {folder}: total {len(cgs)} ，mean = {np.mean(cgs):.3f}")
+
+    else:
+        print(f"  ❌  '{folder}'。")
+
+
+fig, ax = plt.subplots(figsize=(9, 6.5), dpi=300)
+
+for virus_name, data in virus_results.items():
+
+    sns.histplot(
+        data["null_cgs"],
+        bins=35,
+        kde=True,
+        stat="density",
+        alpha=0.25,
+        linewidth=0,
+        color=data["color"],
+        ax=ax,
+        label=f'{virus_name} Null Model'
+    )
+
+    ax.axvline(
+        x=data["null_mean"],
+        color=data["color"],
+        linestyle="--",
+        linewidth=2,
+        label=f'{virus_name} Null Mean ({data["null_mean"]:.2f})'
+    )
+
+    ax.axvline(
+        x=data["obs_cg"],
+        color=data["color"],
+        linestyle="-",
+        linewidth=3.5,
+        label=f'Observed {virus_name} ({data["obs_cg"]:.2f})'
+    )
+
+
+for folder, data in host_results.items():
+    ax.axvline(
+        x=data['mean'],
+        color=data['color'],
+        linestyle='-.',
+        linewidth=2.5,
+        label=f"Avg {folder.capitalize()} (n={data['count']})"
+    )
+
+
+stats_text = "MPXV Selection Signal:\n"
+
+for virus_name, data in virus_results.items():
+    stats_text += f"{virus_name}:\n"
+    stats_text += f"Observed = {data['obs_cg']:.3f}\n"
+    stats_text += f"Z = {data['z_score']:.2f}, {data['p_str']}\n\n"
+
+
+props = dict(
+    boxstyle='round,pad=0.5',
+    facecolor='#FDFEFE',
+    alpha=0.9,
+    edgecolor='#BDC3C7'
+)
+
+ax.text(
+    0.03,
+    0.96,
+    stats_text.strip(),
+    transform=ax.transAxes,
+    fontsize=10.5,
+    verticalalignment='top',
+    bbox=props,
+    fontweight='bold',
+    fontname='Arial'
+)
+
+ax.set_xlabel(r'CpG Relative Abundance ($\rho_{CG}$)', fontsize=14, fontweight='bold')
+ax.set_ylabel('Probability Density', fontsize=14, fontweight='bold')
+
+ax.tick_params(labelsize=12)
+
+ax.legend(
+    fontsize=9,
+    loc='upper right',
+    bbox_to_anchor=(0.6, 0.98),
+    framealpha=0.9
+)
+
+sns.despine(trim=False)
+ax.grid(axis='x', linestyle=':', alpha=0.6)
+
+plt.tight_layout()
+
+output_file = 'MPXV_Core_Peripheral_Null_Model_Ecosystem.png'
+plt.savefig(output_file, dpi=300, bbox_inches='tight')
+
+print(f"\n🎉  {output_file}")
+
+plt.show()
