@@ -647,3 +647,160 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Neutrality Plot
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+from scipy import stats
+import os
+import urllib.request
+
+MIN_SEQ_LEN = 300
+COLORS = {
+    'Peripheral': '#3498DB',  
+    'Core': '#E74C3C'        
+}
+GROUPS = ['Peripheral', 'Core']
+def setup_font_env():
+    """
+    """
+    font_path = 'Arial.ttf'
+
+    if not os.path.exists(font_path):
+        url = "https://github.com/matomo-org/travis-scripts/raw/master/fonts/Arial.ttf"
+        try:
+            urllib.request.urlretrieve(url, font_path)
+            print("✓ ")
+        except Exception as e:
+            print(f"❌ : {e}")
+            return False
+
+    try:
+        fm.fontManager.addfont(font_path)
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = ['Arial']
+
+        plt.rcParams['mathtext.fontset'] = 'custom'
+        plt.rcParams['mathtext.rm'] = 'Arial'
+        plt.rcParams['mathtext.it'] = 'Arial:italic'
+        plt.rcParams['mathtext.bf'] = 'Arial:bold'
+        plt.rcParams['mathtext.default'] = 'regular'
+
+        plt.rcParams['axes.unicode_minus'] = False
+
+        return True
+    except Exception as e:
+        return False
+
+
+setup_font_env()
+
+def read_excel_file(file_path):
+    try:
+        df = pd.read_excel(file_path)
+        if 'Seq_Length' in df.columns:
+            original_count = len(df)
+            df = df[df['Seq_Length'] >= MIN_SEQ_LEN]
+            filtered_count = len(df)
+            dropped_count = original_count - filtered_count
+            print(f"✓ length (≥{MIN_SEQ_LEN}bp):")
+            print(f"  - original: {original_count}")
+            print(f"  - dropped: {dropped_count}")
+            print(f"  - filtered: {filtered_count}")
+        else:
+            print(f"'Seq_Length' ")
+            print(f"  ('Seq_Length' )")
+        # ========================
+
+        print(f"✓  {len(df)} ")
+        return df
+    except Exception as e:
+        return None
+
+def prepare_data(df):
+    df['GC_12(%)'] = (df['GC_1(%)'] + df['GC_2(%)']) / 2
+
+    grouped_data = {}
+    for group in df['Group'].unique():
+        group_df = df[df['Group'] == group]
+        grouped_data[group] = {
+            'data': group_df,
+            'count': len(group_df),
+            'gc_12': group_df['GC_12(%)'].values,
+            'gc_3': group_df['GC_3(%)'].values
+        }
+    return grouped_data
+
+def plot_neutrality_plot(grouped_data, output_file='neutrality_plot.png'):
+
+    fig, ax = plt.subplots(figsize=(10, 8), dpi=300)
+
+    all_gc12 = np.concatenate([v['gc_12'] for v in grouped_data.values()])
+    all_gc3 = np.concatenate([v['gc_3'] for v in grouped_data.values()])
+
+    x_min, x_max = np.floor(all_gc12.min()/5)*5, np.ceil(all_gc12.max()/5)*5
+    y_min, y_max = np.floor(all_gc3.min()/5)*5, np.ceil(all_gc3.max()/5)*5
+
+    for group in GROUPS:
+        if group not in grouped_data: continue
+        data = grouped_data[group]
+
+
+        slope = None
+        slope_str = ""
+        if len(data['gc_12']) > 1:
+            slope, intercept, _, _, _ = stats.linregress(data['gc_12'], data['gc_3'])
+            slope_str = f", Slope={slope:.3f}"
+
+        label_text = f'{group} Genes (n={data["count"]}{slope_str})'
+
+        ax.scatter(data['gc_12'], data['gc_3'], c=COLORS[group], s=80, alpha=0.7,
+                   edgecolors='white', linewidth=1.0, label=label_text, zorder=3)
+
+
+        if slope is not None:
+            x_line = np.array([x_min, x_max])
+            ax.plot(x_line, slope*x_line + intercept, color=COLORS[group],
+                    linewidth=2, alpha=0.8, zorder=2)
+
+    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+    ax.set_axisbelow(True)
+    ax.set_xlim(x_min - 2, x_max + 2)
+    ax.set_ylim(y_min - 2, y_max + 2)
+
+    ax.set_xlabel(r'GC$_{12}$ (%)', fontsize=14, fontweight='bold')
+    ax.set_ylabel(r'GC$_{3}$ (%)', fontsize=14, fontweight='bold')
+
+
+    ax.tick_params(axis='both', labelsize=11)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_linewidth(1.5)
+    ax.spines['bottom'].set_linewidth(1.5)
+
+
+    plt.legend(fontsize=11, loc='upper right', frameon=True, edgecolor='black')
+
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight') # bbox_inches='tight' 
+    print(f"✓ saved: {output_file}")
+    plt.show()
+
+def main():
+    print("="*60)
+
+    print("="*60)
+
+    input_file = input("\n: ").strip().replace("'", "").replace('"', "")
+
+    if os.path.exists(input_file):
+        df = read_excel_file(input_file)
+        if df is not None:
+            grouped = prepare_data(df)
+            plot_neutrality_plot(grouped)
+
+
+if __name__ == "__main__":
+    main()
