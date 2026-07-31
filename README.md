@@ -992,168 +992,358 @@ if __name__ == "__main__":
 
 # ENC-GC3
 import os
-import glob
+import warnings
+import urllib.request
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
-import urllib.request
 import matplotlib.font_manager as fm
-!pip install biopython
-from Bio import SeqIO
+
+warnings.filterwarnings('ignore')
+
 
 def setup_font_env():
+    """
+    """
     font_path = 'Arial.ttf'
+
     if not os.path.exists(font_path):
         try:
-            url = "https://github.com/matomo-org/travis-scripts/raw/master/fonts/Arial.ttf"
+            url = (
+                "https://github.com/matomo-org/"
+                "travis-scripts/raw/master/fonts/Arial.ttf"
+            )
             urllib.request.urlretrieve(url, font_path)
-        except Exception: pass
+        except Exception as e:
+
+
     try:
-        fm.fontManager.addfont(font_path)
+        if os.path.exists(font_path):
+            fm.fontManager.addfont(font_path)
+
         plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = ['Arial']
+        plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
         plt.rcParams['axes.unicode_minus'] = False
+
         plt.rcParams['mathtext.fontset'] = 'custom'
         plt.rcParams['mathtext.it'] = 'Arial:italic'
         plt.rcParams['mathtext.rm'] = 'Arial'
-    except Exception: pass
+
+    except Exception as e:
+        print(f"：{e}")
+
 
 setup_font_env()
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from collections import Counter
-import warnings
+input_excel = 'ENC-GC3.xlsx'
 
-warnings.filterwarnings('ignore')
-core_fasta = 'core.fasta'      
-Peripheral_fasta = 'per.fasta'  
+output_png = 'ENC_Plot_Single_300DPI.png'
+output_pdf = 'ENC_Plot_Single.pdf'
+output_csv = 'ENC_GC3_Analysis_Results.csv'
+output_excel = 'ENC_GC3_Analysis_Results.xlsx'
 
 
-def calculate_gc3s(seq):
-    seq = seq.upper()
-    third_bases = seq[2::3]
-    total_codons = len(third_bases)
-    if total_codons == 0: return 0
-    return (third_bases.count('G') + third_bases.count('C')) / total_codons
+df = pd.read_excel(
+    input_excel,
+    usecols=[0, 1, 2, 3]
+)
 
-def calculate_enc(seq):
-    seq = seq.upper()
-    if len(seq) % 3 != 0: return np.nan
-    codons = [seq[i:i+3] for i in range(0, len(seq), 3)]
-    syn_codons = {
-        'F': ['TTT', 'TTC'], 'L': ['TTA', 'TTG', 'CTT', 'CTC', 'CTA', 'CTG'],
-        'I': ['ATT', 'ATC', 'ATA'], 'M': ['ATG'], 'V': ['GTT', 'GTC', 'GTA', 'GTG'],
-        'S': ['TCT', 'TCC', 'TCA', 'TCG', 'AGT', 'AGC'], 'P': ['CCT', 'CCC', 'CCA', 'CCG'],
-        'T': ['ACT', 'ACC', 'ACA', 'ACG'], 'A': ['GCT', 'GCC', 'GCA', 'GCG'],
-        'Y': ['TAT', 'TAC'], 'H': ['CAT', 'CAC'], 'Q': ['CAA', 'CAG'],
-        'N': ['AAT', 'AAC'], 'K': ['AAA', 'AAG'], 'D': ['GAT', 'GAC'],
-        'E': ['GAA', 'GAG'], 'C': ['TGT', 'TGC'], 'W': ['TGG'],
-        'R': ['CGT', 'CGC', 'CGA', 'CGG', 'AGA', 'AGG'], 'G': ['GGT', 'GGC', 'GGA', 'GGG'],
-        'stop': ['TAA', 'TAG', 'TGA']
-    }
-    codon_counts = Counter(codons)
-    F_values = []
-    for aa, cods in syn_codons.items():
-        if aa == 'stop': continue
-        n = sum(codon_counts[c] for c in cods)
-        if n <= 1: continue
-        sum_pi_sq = sum((codon_counts[c] / n)**2 for c in cods)
-        F = (n * sum_pi_sq - 1) / (n - 1)
-        F_values.append((aa, F))
-    deg_map = {'M':1, 'W':1, 'F':2, 'Y':2, 'H':2, 'Q':2, 'N':2, 'K':2, 'D':2, 'E':2, 'C':2,
-               'I':3, 'V':4, 'P':4, 'T':4, 'A':4, 'G':4, 'L':6, 'R':6, 'S':6}
-    F_sums = {k: [] for k in [2,3,4,6]}
-    for aa, F in F_values:
-        deg = deg_map.get(aa)
-        if deg in F_sums: F_sums[deg].append(F)
-    enc = 2.0
-    def get_mean_F(k): return np.mean(F_sums[k]) if F_sums[k] else 1.0/k
-    enc += 9.0/get_mean_F(2) + 1.0/get_mean_F(3) + 5.0/get_mean_F(4) + 3.0/get_mean_F(6)
-    return min(61, enc)
-def read_fasta(filename):
-    records = []
-    current_id, current_desc, current_seq = None, None, []
-    try:
-        with open(filename, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line: continue
-                if line.startswith('>'):
-                    if current_id is not None:
-                        records.append({'id': current_id, 'seq': ''.join(current_seq), 'desc': current_desc})
-                    header = line[1:]
-                    parts = header.split(None, 1)
-                    current_id = parts[0]
-                    current_desc = parts[1] if len(parts) > 1 else ''
-                    current_seq = []
-                else:
-                    current_seq.append(line)
-            if current_id is not None:
-                records.append({'id': current_id, 'seq': ''.join(current_seq), 'desc': current_desc})
-    except Exception as e:
-        print(f"读取文件 {filename} 时出错: {e}"); return []
-    return records
 
-core_records = read_fasta(core_fasta)
-Peripheral_records = read_fasta(Peripheral_fasta)
+df.columns = ['Gene', 'Type', 'ENC', 'GC3s']
 
-gene_list = []
-for rec in core_records: gene_list.append({'id': rec['id'], 'seq': rec['seq'], 'type': 'Core'})
-for rec in Peripheral_records: gene_list.append({'id': rec['id'], 'seq': rec['seq'], 'type': 'Peripheral'})
+print("Excel 。")
+print("\n 5：")
+print(df.head())
 
-data = []
-for item in gene_list:
-    seq = item['seq']
-    gc3 = calculate_gc3s(seq)
-    enc = calculate_enc(seq)
-    if not np.isnan(enc):
-        data.append({'Gene': item['id'], 'GC3s': gc3, 'ENC': enc, 'Type': item['type']})
 
-df = pd.DataFrame(data)
+df = df.dropna(how='all').copy()
+
+df['Gene'] = (
+    df['Gene']
+    .astype(str)
+    .str.replace('\n', '', regex=False)
+    .str.replace('\r', '', regex=False)
+    .str.strip()
+)
+
+df['Type'] = (
+    df['Type']
+    .astype(str)
+    .str.replace('\n', '', regex=False)
+    .str.replace('\r', '', regex=False)
+    .str.strip()
+)
+
+df['ENC'] = pd.to_numeric(df['ENC'], errors='coerce')
+df['GC3s'] = pd.to_numeric(df['GC3s'], errors='coerce')
+
+df = df.dropna(
+    subset=['Gene', 'Type', 'ENC', 'GC3s']
+).copy()
+
+df = df[
+    (df['Gene'].str.lower() != 'nan') &
+    (df['Type'].str.lower() != 'nan')
+].copy()
+
+type_mapping = {
+    'core': 'Core',
+    'CORE': 'Core',
+    'Core': 'Core',
+    'cor': 'Core',
+    'core': 'Core',
+
+    'peripheral': 'Peripheral',
+    'PERIPHERAL': 'Peripheral',
+    'Peripheral': 'Peripheral',
+    'per': 'Peripheral',
+    'per': 'Peripheral',
+    'Accessory': 'Peripheral',
+    'accessory': 'Peripheral'
+}
+
+df['Type'] = df['Type'].replace(type_mapping)
+
+df.loc[
+    df['Type'].str.lower() == 'core',
+    'Type'
+] = 'Core'
+
+df.loc[
+    df['Type'].str.lower().isin(
+        ['peripheral', 'accessory']
+    ),
+    'Type'
+] = 'Peripheral'
+
+valid_types = ['Core', 'Peripheral']
+
+invalid_types = sorted(
+    df.loc[
+        ~df['Type'].isin(valid_types),
+        'Type'
+    ].dropna().unique().tolist()
+)
+
+if invalid_types:
+    print("\n warning")
+    print(invalid_types)
+
+df = df[df['Type'].isin(valid_types)].copy()
+
+
+if len(df) > 0 and df['GC3s'].max() > 1:
+    print(
+        "\n>1，"
+  
+    )
+    df['GC3s'] = df['GC3s'] / 100
+
+df = df[
+    (df['GC3s'] >= 0) &
+    (df['GC3s'] <= 1) &
+    (df['ENC'] > 0)
+].copy()
+
 
 def expected_enc(gc3s):
-    return 2 + gc3s + 29 / (gc3s**2 + (1-gc3s)**2)
+    """
+    ENC_expected = 2 + s + 29 / [s² + (1-s)²]
+    """
+    gc3s = np.asarray(gc3s, dtype=float)
 
-plt.figure(figsize=(10, 8), dpi=300)
+    return (
+        2
+        + gc3s
+        + 29 / (
+            gc3s ** 2
+            + (1 - gc3s) ** 2
+        )
+    )
 
-s = np.linspace(0.01, 0.99, 200)
+df['Expected_ENC'] = expected_enc(df['GC3s'])
+
+df['Deviation'] = (
+    df['ENC']
+    - df['Expected_ENC']
+)
+
+summary = (
+    df.groupby('Type')
+    .agg(
+        n=('Gene', 'count'),
+        Mean_ENC=('ENC', 'mean'),
+        SD_ENC=('ENC', 'std'),
+        Mean_GC3s=('GC3s', 'mean'),
+        SD_GC3s=('GC3s', 'std'),
+        Mean_Deviation=('Deviation', 'mean'),
+        SD_Deviation=('Deviation', 'std')
+    )
+    .reset_index()
+)
+
+print("\n：")
+print(summary.round(4))
+
+fig, ax = plt.subplots(
+    figsize=(10, 8),
+    dpi=300
+)
+
+s = np.linspace(
+    0.001,
+    0.999,
+    500
+)
+
 curve = expected_enc(s)
-plt.plot(s, curve, 'k-', lw=2, label='Standard Curve', zorder=1)
 
-colors = {'Core': '#E74C3C', 'Peripheral': '#3498DB'}
-markers = {'Core': 'o', 'Peripheral': 's'}
+ax.plot(
+    s,
+    curve,
+    color='black',
+    linewidth=2.0,
+    label='Standard curve',
+    zorder=1
+)
+
+colors = {
+    'Core': '#E74C3C',
+    'Peripheral': '#3498DB'
+}
+
+markers = {
+    'Core': 'o',
+    'Peripheral': 's'
+}
 
 for gene_type in ['Core', 'Peripheral']:
-    subset = df[df['Type'] == gene_type]
-    if len(subset) > 0:
-        subset['Expected'] = subset['GC3s'].apply(expected_enc)
-        avg_dev = (subset['ENC'] - subset['Expected']).mean()
 
-        plt.scatter(subset['GC3s'], subset['ENC'],
-                    c=colors[gene_type], marker=markers[gene_type],
-                    s=70, alpha=0.7, edgecolor='black', linewidth=0.5,
-                    label=f'{gene_type} (n={len(subset)}, Δ={avg_dev:.2f})', zorder=2)
+    subset = df[
+        df['Type'] == gene_type
+    ].copy()
 
-plt.xlabel('GC3s', fontsize=12)
-plt.ylabel('ENC', fontsize=12)
-plt.xlim(0, 1)
-plt.ylim(20, 65)
-plt.grid(ls='--', alpha=0.3)
-plt.legend(loc='upper right', frameon=True, fontsize=10)
+    if subset.empty:
+        continue
 
-plt.savefig('ENC_Plot_Single_300DPI.png', dpi=300, bbox_inches='tight')
-print("\n ENC_Plot_Single_300DPI.png")
+    avg_dev = subset['Deviation'].mean()
 
-df['Expected_ENC'] = df['GC3s'].apply(expected_enc)
-df['Deviation'] = df['ENC'] - df['Expected_ENC']
-df.to_csv('ENC_GC3_Analysis_Results.csv', index=False)
-print("saved ENC_GC3_Analysis_Results.csv")
+    ax.scatter(
+        subset['GC3s'],
+        subset['ENC'],
+        color=colors[gene_type],
+        marker=markers[gene_type],
+        s=70,
+        alpha=0.70,
+        edgecolors='black',
+        linewidths=0.5,
+        label=(
+            f'{gene_type} '
+            f'(n={len(subset)}, '
+            f'Δ={avg_dev:.2f})'
+        ),
+        zorder=2
+    )
+
+ax.set_xlabel(
+    'GC3s',
+    fontsize=12
+)
+
+ax.set_ylabel(
+    'ENC',
+    fontsize=12
+)
+
+ax.set_xlim(
+    0,
+    1
+)
+
+ax.set_ylim(
+    20,
+    65
+)
+
+ax.set_xticks(
+    np.arange(0, 1.01, 0.1)
+)
+
+ax.set_yticks(
+    np.arange(20, 66, 5)
+)
+
+ax.tick_params(
+    axis='both',
+    which='major',
+    labelsize=10,
+    direction='out',
+    length=4,
+    width=1
+)
+
+ax.grid(
+    linestyle='--',
+    linewidth=0.7,
+    alpha=0.30
+)
+
+ax.legend(
+    loc='upper right',
+    frameon=True,
+    fontsize=10,
+    edgecolor='black'
+)
+
+for spine in ax.spines.values():
+    spine.set_linewidth(1.0)
+    spine.set_color('black')
+
+plt.tight_layout()
+
+plt.savefig(
+    output_png,
+    dpi=300,
+    bbox_inches='tight'
+)
+
+plt.savefig(
+    output_pdf,
+    bbox_inches='tight'
+)
+
+print(f"\nPNG：{output_png}")
+print(f"PDF：{output_pdf}")
+
+df.to_csv(
+    output_csv,
+    index=False,
+    encoding='utf-8-sig'
+)
+
+with pd.ExcelWriter(
+    output_excel,
+    engine='openpyxl'
+) as writer:
+
+    df.to_excel(
+        writer,
+        sheet_name='Detailed results',
+        index=False
+    )
+
+    summary.to_excel(
+        writer,
+        sheet_name='Summary',
+        index=False
+    )
+
+print(f"CSV saved：{output_csv}")
+print(f"Excel saved：{output_excel}")
+
 
 plt.show()
-
 
 # SiD-hotmap
 import pandas as pd
