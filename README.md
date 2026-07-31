@@ -1153,3 +1153,228 @@ df.to_csv('ENC_GC3_Analysis_Results.csv', index=False)
 print("saved ENC_GC3_Analysis_Results.csv")
 
 plt.show()
+
+
+# SiD-hotmap
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.patches import Patch
+import os
+import sys
+import urllib.request
+import matplotlib.font_manager as fm
+import warnings
+
+
+warnings.filterwarnings('ignore')
+
+def setup_font_env():
+    font_urls = {
+        'Arial.ttf': "https://github.com/matomo-org/travis-scripts/raw/master/fonts/Arial.ttf",
+        'Arial_Bold.ttf': "https://github.com/matomo-org/travis-scripts/raw/master/fonts/Arial_Bold.ttf",
+        'Arial_Italic.ttf': "https://github.com/matomo-org/travis-scripts/raw/master/fonts/Arial_Italic.ttf"
+    }
+
+    for font_name, url in font_urls.items():
+        if not os.path.exists(font_name):
+            try:
+                urllib.request.urlretrieve(url, font_name)
+            except:
+                pass
+        try:
+            fm.fontManager.addfont(font_name)
+        except:
+            pass
+
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['Arial']
+
+    plt.rcParams['text.color'] = 'black'
+    plt.rcParams['axes.labelcolor'] = 'black'
+    plt.rcParams['xtick.color'] = 'black'
+    plt.rcParams['ytick.color'] = 'black'
+    plt.rcParams['axes.unicode_minus'] = False
+
+setup_font_env()
+
+HOST_COLORS = {
+    'Chiroptera': '#Aed9df',   
+    'Primates':   '#e9e0b5',   
+    'Rodentia':   '#b4d0a4',   
+}
+
+def read_rscu_file(file_path):
+    try:
+        df = pd.read_excel(file_path)
+        print(f"✓ : {file_path}")
+        return df
+    except Exception as e:
+        print(f"❌ : {e}")
+        return None
+
+def extract_rscu_by_gene_type(df):
+    stop_codons = ['TAA', 'TAG', 'TGA']
+    virus_data = {}
+    host_data = {}
+    rscu_cols = df.columns[2:]
+    valid_cols = [col for col in rscu_cols if not any(stop in str(col) for stop in stop_codons)]
+
+    for idx, row in df.iterrows():
+        species = row[df.columns[0]]
+        order = row[df.columns[1]]
+        rscu_values = {}
+        for col in valid_cols:
+            try:
+                val = float(row[col])
+                if not np.isnan(val): rscu_values[col] = val
+            except: pass
+
+        if 'Core' in str(species) and 'Virus' in str(order):
+            virus_data['Core'] = rscu_values
+        elif 'Peripheral' in str(species) and 'Virus' in str(order):
+            virus_data['Peripheral'] = rscu_values
+        else:
+            if len(rscu_values) > 0:
+                host_data[species] = rscu_values
+    return virus_data, host_data
+
+def calculate_sid_matrix(virus_data, host_data):
+    results = []
+    for gene_type, virus_rscu in virus_data.items():
+        for species, host_rscu in host_data.items():
+            common = set(virus_rscu.keys()) & set(host_rscu.keys())
+            if not common: continue
+            sid = sum(abs(virus_rscu[k] - host_rscu[k]) for k in common) / 2
+            results.append({'Gene_Type': gene_type, 'Species': species, 'SiD': sid})
+
+    sid_df = pd.DataFrame(results)
+    sid_matrix = sid_df.pivot_table(index='Species', columns='Gene_Type', values='SiD')
+    return sid_matrix, sid_df
+
+def extract_order_info(df, host_data):
+    species_order_map = {}
+    for idx, row in df.iterrows():
+        species = row[df.columns[0]]
+        order = row[df.columns[1]]
+        if species in host_data:
+            species_order_map[species] = str(order).strip()
+    return species_order_map
+
+def plot_sid_heatmap_clustered(sid_matrix, sid_df, species_order_map=None, output_file='SiD_heatmap_clustered.png'):
+
+    host_scores = sid_df.groupby('Species')['SiD'].mean().sort_values()
+    sid_matrix_sorted = sid_matrix.loc[host_scores.index]
+
+    row_colors = []
+    for species in sid_matrix_sorted.index:
+        order_name = species_order_map.get(species, 'Unknown') if species_order_map else 'Unknown'
+        color = '#D3D3D3'
+        for k, v in HOST_COLORS.items():
+            if k in order_name:
+                color = v
+                break
+        row_colors.append(color)
+
+    fig_height = max(12, len(sid_matrix_sorted) * 0.35)
+    fig, ax = plt.subplots(figsize=(11, fig_height), dpi=300)
+
+    sns.heatmap(sid_matrix_sorted,
+                annot=True,
+                fmt='.4f',
+                cmap='RdYlGn_r', 
+                cbar_kws={'label': 'SiD Value (Lower = Higher Similarity)', 'shrink': 0.5, 'pad': 0.15},
+                linewidths=1,
+                linecolor='white',
+                ax=ax,
+                annot_kws={'fontsize': 8.5, 'fontname': 'Arial', 'color': 'black'})
+
+    n_cols = sid_matrix_sorted.shape[1]
+    for i, color in enumerate(row_colors):
+        rect = plt.Rectangle((n_cols + 0.05, i), 0.15, 1, transform=ax.transData,
+                             clip_on=False, facecolor=color, edgecolor='none')
+        ax.add_patch(rect)
+
+    ax.set_title('SiD Analysis: MPOX vs Host Species\n(Sorted by Similarity)',
+                 fontsize=15, fontweight='bold', pad=25, fontname='Arial')
+    ax.set_xlabel('MPOX Gene Type', fontsize=12, fontweight='bold', fontname='Arial', labelpad=12)
+    ax.set_ylabel('Host Species', fontsize=12, fontweight='bold', fontname='Arial', labelpad=12)
+
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=0, fontsize=11, fontweight='bold', fontname='Arial')
+
+    ax.yaxis.set_ticks_position('left')
+
+    ylabels = [label.get_text() for label in ax.get_yticklabels()]
+    ax.set_yticklabels(ylabels, rotation=0, fontsize=10.5, va='center')
+
+    for label in ax.get_yticklabels():
+        label.set_fontname('Arial')
+        label.set_fontstyle('italic')
+
+    ax.tick_params(axis='y', which='both', length=0)
+
+    legend_elements = []
+    existing_orders = set(species_order_map.values())
+    preferred_order = ['Chiroptera', 'Primates', 'Rodentia', 'Carnivora', 'Artiodactyla']
+
+    for order_key in preferred_order:
+        found = False
+        for ex_ord in existing_orders:
+            if order_key in ex_ord: found = True; break
+        if found:
+             legend_elements.append(Patch(facecolor=HOST_COLORS[order_key],
+                                         edgecolor='none', label=order_key))
+
+    if any('Unknown' in val for val in existing_orders):
+         legend_elements.append(Patch(facecolor=HOST_COLORS['Unknown'], label='Other'))
+
+    leg = ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.2, 1),
+              fontsize=10, title='Taxonomy Order', framealpha=1,
+              edgecolor='black', fancybox=False)
+
+    plt.setp(leg.get_title(), fontweight='bold', fontname='Arial')
+    plt.setp(leg.get_texts(), fontname='Arial')
+
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white')
+    print(f"✓ saved: {output_file}")
+    plt.show()
+
+def save_sid_results(sid_df, output_file='SiD.txt'):
+    host_scores = sid_df.groupby('Species')['SiD'].mean().sort_values()
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write("SiD Analysis Results\n====================\n\n")
+        f.write("Top Potential Hosts (Lowest SiD = Highest Similarity):\n")
+        for rank, (species, avg_sid) in enumerate(host_scores.head(10).items(), 1):
+             f.write(f"{rank}. {species}: {avg_sid:.5f}\n")
+
+def main():
+    print("=" * 60)
+    print("MPOX SiD Analysis (Custom Colors)")
+    print("=" * 60)
+
+    input_file = '35个-RSCU.xlsx'
+    if not os.path.exists(input_file):
+        input_file = input("no file: ").strip().replace('"','')
+
+    if not os.path.exists(input_file):
+        print("❌ ")
+        sys.exit(1)
+
+    df = read_rscu_file(input_file)
+    if df is not None:
+        virus_data, host_data = extract_rscu_by_gene_type(df)
+        if virus_data and host_data:
+            species_order_map = extract_order_info(df, host_data)
+            sid_matrix, sid_df = calculate_sid_matrix(virus_data, host_data)
+
+            print("\n")
+            plot_sid_heatmap_clustered(sid_matrix, sid_df, species_order_map,
+                                     output_file='SiD_heatmap_CustomColors.png')
+
+            save_sid_results(sid_df)
+            print("\n saved。")
+
+if __name__ == "__main__":
+    main()
